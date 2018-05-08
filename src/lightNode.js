@@ -72,7 +72,7 @@ class LightNode extends EventEmitter {
     // TODO: get tip height from multiple peers and make sure
     //       they give us similar results
     let status = await this.rpc.status()
-    let tip = status.latest_block_height
+    let tip = status.result.sync_info.latest_block_height
 
     // make sure we aren't syncing from longer than than the unbonding period
     if (tip - this.height() > this.maxAge) {

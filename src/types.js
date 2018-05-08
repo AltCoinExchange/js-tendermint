@@ -74,7 +74,7 @@ let PubKey = {
 let ValidatorHashInput = struct([
   { name: 'address', type: VarHexBuffer },
   { name: 'pub_key', type: PubKey },
-  { name: 'voting_power', type: Int64BE }
+  { name: 'power', type: Int64BE }
 ])
 
 module.exports = {
