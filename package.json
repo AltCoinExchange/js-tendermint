@@ -6,7 +6,6 @@
   "scripts": {
     "test": "depcheck && standard index.js src/*.js test/*.js && nyc ava",
     "build": "rm -rf lib && babel src -d lib --presets env",
-    "prepublish": "npm run build",
     "generateFixtures": "go run test/fixtures/generate.go"
   },
   "dependencies": {
