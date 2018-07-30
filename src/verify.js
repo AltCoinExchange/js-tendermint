@@ -3,26 +3,28 @@ let {
   getBlockHash,
   getValidatorSetHash
 } = require('./hash.js')
-let getValidatorAddress = require('./address.js')
-
+let { PubKey } = require('./types.js')
+let { ripemd160 } = require('./hash.js')
 let ed25519 = require('supercop.js')
-try {
-  // try to load native version
-  ed25519 = require('ed25519-supercop')
-} catch (err) {}
+// TODO: try to load native ed25519 implementation, fall back to supercop.js
 
 // gets the serialized representation of a vote, which is used
 // in the commit signatures
-function getVoteSignBytes (chain_id, vote) {
-  let { block_id, height, round, type, timestamp } = vote
+function getVoteSignBytes (chainId, vote) {
+  let { height, round, timestamp, type, block_id: blockId } = vote
 
-  // normalize time zone
+  // ensure timestamp only has millisecond precision
   timestamp = new Date(timestamp).toISOString()
 
-  return stringify({
-    chain_id,
-    vote: { block_id, height, round, type, timestamp }
-  })
+  return Buffer.from(stringify({
+    '@chain_id': chainId,
+    '@type': 'vote',
+    block_id: blockId,
+    height,
+    round,
+    timestamp,
+    type
+  }))
 }
 
 // verifies that a number is a positive integer, less than the
@@ -44,7 +46,7 @@ function verifyPositiveInt (n) {
 function verifyCommit (header, commit, validators) {
   let blockHash = getBlockHash(header)
 
-  if (blockHash !== commit.blockID.hash) {
+  if (blockHash !== commit.block_id.hash) {
     throw Error('Commit does not match block hash')
   }
 
@@ -56,13 +58,13 @@ function verifyCommit (header, commit, validators) {
     if (precommit == null) continue
 
     // all fields of block ID must match commit
-    if (precommit.block_id.hash !== commit.blockID.hash) {
+    if (precommit.block_id.hash !== commit.block_id.hash) {
       throw Error('Precommit block hash does not match commit')
     }
-    if (precommit.block_id.parts.total !== commit.blockID.parts.total) {
+    if (precommit.block_id.parts.total !== commit.block_id.parts.total) {
       throw Error('Precommit parts count does not match commit')
     }
-    if (precommit.block_id.parts.hash !== commit.blockID.parts.hash) {
+    if (precommit.block_id.parts.hash !== commit.block_id.parts.hash) {
       throw Error('Precommit parts hash does not match commit')
     }
 
@@ -92,7 +94,7 @@ function verifyCommit (header, commit, validators) {
 
     // ensure this precommit references the correct validator
     let validator = validators[precommit.validator_index]
-    if (precommit.validator_address !== getValidatorAddress(validator.pub_key)) {
+    if (precommit.validator_address !== validator.address) {
       throw Error('Precommit address does not match validator')
     }
   }
@@ -104,7 +106,6 @@ function verifyCommit (header, commit, validators) {
 // power of the given validator set
 function verifyCommitSigs (header, commit, validators) {
   let committedVotingPower = 0
-  let countedValidators = new Array(validators.length)
 
   // index validators by address
   let validatorsByAddress = {}
@@ -124,9 +125,9 @@ function verifyCommitSigs (header, commit, validators) {
     // validator sets)
     if (!validator) continue
 
-    let signature = Buffer.from(precommit.signature.data, 'hex')
-    let signBytes = Buffer.from(getVoteSignBytes(header.chain_id, precommit))
-    let pubKey = Buffer.from(validator.pub_key.data, 'hex')
+    let signature = Buffer.from(precommit.signature.value, 'base64')
+    let signBytes = getVoteSignBytes(header.chain_id, precommit)
+    let pubKey = Buffer.from(validator.pub_key.value, 'base64')
 
     // TODO: support secp256k1 sigs
     if (!ed25519.verify(signature, signBytes, pubKey)) {
@@ -150,7 +151,9 @@ function verifyCommitSigs (header, commit, validators) {
   // verify enough voting power signed
   let twoThirds = Math.ceil(totalVotingPower * 2 / 3)
   if (committedVotingPower < twoThirds) {
-    throw Error('Not enough committed voting power')
+    let error = Error('Not enough committed voting power')
+    error.insufficientVotingPower = true
+    throw error
   }
 }
 
@@ -158,7 +161,7 @@ function verifyCommitSigs (header, commit, validators) {
 // and hashes to the correct value
 function verifyValidatorSet (validators, expectedHash) {
   for (let validator of validators) {
-    if (getValidatorAddress(validator.pub_key) !== validator.address) {
+    if (getAddress(validator.pub_key) !== validator.address) {
       throw Error('Validator address does not match pubkey')
     }
 
@@ -187,8 +190,8 @@ function verify (oldState, newState) {
   let validatorSetChanged = newState.header.validators_hash !== oldState.header.validators_hash
 
   // make sure new header has a valid commit
-  let validators = validatorSetChanged ?
-    newState.validators : oldState.validators
+  let validators = validatorSetChanged
+    ? newState.validators : oldState.validators
   verifyCommit(newState.header, newState.commit, validators)
 
   if (validatorSetChanged) {
@@ -198,6 +201,11 @@ function verify (oldState, newState) {
     // make sure new commit is signed by 2/3+ of old validator set
     verifyCommitSigs(newState.header, newState.commit, oldState.validators)
   }
+}
+
+function getAddress (pubkey) {
+  let bytes = PubKey.encode(pubkey)
+  return ripemd160(bytes).toString('hex').toUpperCase()
 }
 
 module.exports = verify

@@ -8,6 +8,7 @@ const camel = require('camelcase')
 const websocket = require('websocket-stream')
 const ndjson = require('ndjson')
 const pumpify = require('pumpify').obj
+const debug = require('debug')('tendermint:rpc')
 const tendermintMethods = require('./methods.js')
 
 function convertArgs (args) {
@@ -23,20 +24,37 @@ function convertArgs (args) {
   return args
 }
 
+const wsProtocols = [ 'ws:', 'wss:' ]
+const httpProtocols = [ 'http:', 'https:' ]
+const allProtocols = wsProtocols.concat(httpProtocols)
+
 class Client extends EventEmitter {
   constructor (uriString = 'localhost:46657') {
     super()
-    let uri = url.parse(uriString)
-    if (uri.protocol !== 'http:' && uri.protocol !== 'ws:') {
-      uri = url.parse(`http://${uriString}`)
+
+    // parse full-node URI
+    let { protocol, hostname, port } = url.parse(uriString)
+
+    // default to http
+    if (!allProtocols.includes(protocol)) {
+      let uri = url.parse(`http://${uriString}`)
+      protocol = uri.protocol
+      hostname = uri.hostname
+      port = uri.port
     }
-    if (uri.protocol === 'ws:') {
+
+    // default port
+    if (!port) {
+      port = 26657
+    }
+
+    if (wsProtocols.includes(protocol)) {
       this.websocket = true
-      this.uri = `ws://${uri.hostname}:${uri.port}/websocket`
+      this.uri = `${protocol}//${hostname}:${port}/websocket`
       this.call = this.callWs
       this.connectWs()
-    } else if (uri.protocol === 'http:') {
-      this.uri = `http://${uri.hostname}:${uri.port}/`
+    } else if (httpProtocols.includes(protocol)) {
+      this.uri = `${protocol}//${hostname}:${port}/`
       this.call = this.callHttp
     }
   }
@@ -63,7 +81,7 @@ class Client extends EventEmitter {
       if (data.error) {
         throw Error(JSON.stringify(data.error))
       }
-      return data
+      return data.result
     }, function (err) {
       throw Error(err)
     })
@@ -76,10 +94,14 @@ class Client extends EventEmitter {
       let params = convertArgs(args)
 
       if (method === 'subscribe') {
+        if (typeof listener !== 'function') {
+          throw Error('Must provide listener function')
+        }
+
         // events get passed to listener
         this.on(id + '#event', (err, res) => {
           if (err) return self.emit('error', err)
-          listener(res.data.data)
+          listener(res.data.value)
         })
 
         // promise resolves on successful subscription or error
@@ -108,7 +130,16 @@ class Client extends EventEmitter {
 // add methods to Client class based on methods defined in './methods.js'
 for (let name of tendermintMethods) {
   Client.prototype[camel(name)] = function (args, listener) {
+    if (args) {
+      debug('>>', name, args)
+    } else {
+      debug('>>', name)
+    }
     return this.call(name, args, listener)
+      .then((res) => {
+        debug('<<', name, res)
+        return res
+      })
   }
 }
 
