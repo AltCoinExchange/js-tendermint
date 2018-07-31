@@ -1,6 +1,6 @@
 'use strict'
 
-const EventEmitter = require('events')
+const EventEmitter = require('eventemitter2')
 const axios = require('axios')
 const url = require('url')
 const old = require('old')
